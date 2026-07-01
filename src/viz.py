@@ -311,8 +311,9 @@ const playBtn = document.getElementById('play');
 slider.max = String(Math.max(0, N - 1));
 
 // playhead is a *continuous* frame position (float); i0/i1 are the frames it
-// sits between and `frac` is how far along, driving the crossfade.
-let playhead = Math.floor(N / 2);
+// sits between and `frac` is how far along, driving the crossfade. Start at the
+// first daylight frame (earliest morning, ~6 AM in summer) rather than midday.
+let playhead = 0;
 let playing = false, lastTs = null, rafId = null;
 
 function readout(i) {

@@ -1,0 +1,22 @@
+# Geospatial processing
+osmnx>=2.0,<3.0
+geopandas>=1.0
+shapely>=2.0
+pyproj>=3.6
+
+# Shadow modeling
+pybdshadow>=0.3.5
+suncalc>=0.1.3
+
+# Tree canopy raster (Meta/WRI 1m canopy height)
+rasterio>=1.3
+rioxarray>=0.15
+numpy>=1.24
+
+# Frontend UI & rendering
+streamlit>=1.30
+pydeck>=0.9
+
+# Utilities
+pandas>=2.0
+requests>=2.31

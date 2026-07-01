@@ -41,9 +41,13 @@ CANOPY_S3_BASE = (
 )
 CANOPY_TILES_INDEX = f"{CANOPY_S3_BASE}/tiles.geojson"
 CANOPY_TILES_CACHE = os.path.join(config.DATA_DIR, "canopy_tiles.geojson")
-# Dissolved tree-canopy footprint (EPSG:32617) + representative height. This is
-# time-independent, so we read the raster once and reuse it for every hour.
-CANOPY_TREES_CACHE = os.path.join(config.DATA_DIR, "canopy_trees.gpkg")
+
+
+def _trees_cache_path(aoi_key: str) -> str:
+    """Per-AOI dissolved tree-canopy footprint (EPSG:32617) + representative
+    height. Time-independent, so we read the raster once per neighbourhood and
+    reuse it for every hour."""
+    return os.path.join(config.DATA_DIR, f"canopy_trees_{aoi_key}.gpkg")
 
 # Read the AOI at ~this many metres/pixel; 1.2 m native is overkill for routing.
 CANOPY_READ_RES_M: float = 3.0
@@ -112,12 +116,13 @@ def _read_tree_mask(tile: str, bbox_3857) -> tuple[np.ndarray, object]:
     return arr, transform
 
 
-def _load_tree_canopy(bbox_wgs84, use_cache: bool = True):
+def _load_tree_canopy(bbox_wgs84, aoi_key: str = "default", use_cache: bool = True):
     """Time-independent dissolved tree-canopy footprint (EPSG:32617) and a
-    representative canopy height (m). Reads the raster once, then caches to disk.
-    Returns (geometry_or_None, rep_height)."""
-    if use_cache and os.path.exists(CANOPY_TREES_CACHE):
-        g = gpd.read_file(CANOPY_TREES_CACHE)
+    representative canopy height (m). Reads the raster once, then caches to disk
+    per AOI. Returns (geometry_or_None, rep_height)."""
+    cache_path = _trees_cache_path(aoi_key)
+    if use_cache and os.path.exists(cache_path):
+        g = gpd.read_file(cache_path)
         if len(g) and g.geometry.iloc[0] is not None and not g.geometry.iloc[0].is_empty:
             return g.geometry.iloc[0], float(g["rep_height"].iloc[0])
         return None, 0.0
@@ -161,7 +166,7 @@ def _load_tree_canopy(bbox_wgs84, use_cache: bool = True):
     os.makedirs(config.DATA_DIR, exist_ok=True)
     gpd.GeoDataFrame(
         {"rep_height": [rep_height]}, geometry=[trees_geom], crs=config.CRS_METRIC
-    ).to_file(CANOPY_TREES_CACHE, driver="GPKG")
+    ).to_file(cache_path, driver="GPKG")
     return trees_geom, rep_height
 
 
@@ -170,11 +175,13 @@ def canopy_shade(
     when: datetime,
     sun_altitude_deg: Optional[float] = None,
     sun_azimuth_deg: Optional[float] = None,
+    aoi_key: str = "default",
 ) -> gpd.GeoDataFrame:
     """Tree-canopy ground-shade polygons for ``bbox`` at ``when`` (WGS84 out).
 
-    The expensive raster read/vectorise is cached (time-independent); only the
-    sun-direction sweep is recomputed per timestamp, so repeat hours are fast.
+    The expensive raster read/vectorise is cached per ``aoi_key`` (time-
+    independent); only the sun-direction sweep is recomputed per timestamp, so
+    repeat hours are fast.
     """
     if sun_altitude_deg is None or sun_azimuth_deg is None:
         from suncalc import get_position
@@ -193,7 +200,7 @@ def canopy_shade(
     if alt <= 0:
         return empty
 
-    trees_geom, rep_height = _load_tree_canopy(bbox_wgs84)
+    trees_geom, rep_height = _load_tree_canopy(bbox_wgs84, aoi_key=aoi_key)
     if trees_geom is None or trees_geom.is_empty:
         return empty
 

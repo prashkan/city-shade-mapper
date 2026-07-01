@@ -1,9 +1,8 @@
-"""Data scaffolding - building footprints for the study area.
+"""Data scaffolding - building footprints scoped to a neighbourhood.
 
-Downloads building footprints for the AOI, imputes building heights where OSM
-lacks them, and caches results so we do not re-hit Overpass on every run. Unlike
-the routing project this app needs no street graph — the shade is cast purely by
-building (and optional tree-canopy) geometry.
+Downloads building footprints within a chosen neighbourhood (plus a small margin
+so edge-casting shadows are captured), imputes heights where OSM lacks them, and
+caches per neighbourhood so we do not re-hit Overpass on every run.
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ import geopandas as gpd
 import osmnx as ox
 
 import config
+from src.neighbourhoods import Neighbourhood
 
 
 # --------------------------------------------------------------------------
@@ -41,21 +41,35 @@ def impute_height(row) -> float:
     return config.DEFAULT_BUILDING_HEIGHT_M
 
 
-def load_buildings(use_cache: bool = True) -> gpd.GeoDataFrame:
-    """Return building footprints (polygons) with a populated `height` column.
+def buildings_cache_path(nb: Neighbourhood) -> str:
+    return os.path.join(config.DATA_DIR, f"buildings_{nb.slug}.gpkg")
+
+
+def _download_polygon(nb: Neighbourhood):
+    """Neighbourhood polygon buffered by BUILDINGS_MARGIN_M (WGS84)."""
+    buffered_m = (
+        gpd.GeoSeries([nb.geometry], crs=config.CRS_WGS84)
+        .to_crs(config.CRS_METRIC)
+        .buffer(config.BUILDINGS_MARGIN_M)
+    )
+    return buffered_m.to_crs(config.CRS_WGS84).iloc[0]
+
+
+def load_buildings(nb: Neighbourhood, use_cache: bool = True) -> gpd.GeoDataFrame:
+    """Return building footprints (polygons) for ``nb`` with a `height` column.
 
     Output is in WGS84 (EPSG:4326); reproject downstream as needed.
     """
-    if use_cache and os.path.exists(config.BUILDINGS_CACHE):
-        return gpd.read_file(config.BUILDINGS_CACHE)
+    path = buildings_cache_path(nb)
+    if use_cache and os.path.exists(path):
+        return gpd.read_file(path)
 
     tags = {"building": True}
+    poly = _download_polygon(nb)
     try:
-        gdf = ox.features_from_point(
-            config.CENTER_LATLON, tags=tags, dist=config.RADIUS_M
-        )
+        gdf = ox.features_from_polygon(poly, tags=tags)
     except Exception:
-        minx, miny, maxx, maxy = config.aoi_bbox()
+        minx, miny, maxx, maxy = poly.bounds
         gdf = ox.features_from_bbox(bbox=(minx, miny, maxx, maxy), tags=tags)
 
     # Keep only polygonal footprints.
@@ -77,7 +91,7 @@ def load_buildings(use_cache: bool = True) -> gpd.GeoDataFrame:
     )
 
     os.makedirs(config.DATA_DIR, exist_ok=True)
-    keep.to_file(config.BUILDINGS_CACHE, driver="GPKG")
+    keep.to_file(path, driver="GPKG")
     return keep
 
 
@@ -93,6 +107,9 @@ def height_coverage(buildings: gpd.GeoDataFrame) -> dict:
 
 
 if __name__ == "__main__":
-    b = load_buildings()
-    print(f"Buildings: {len(b)}")
+    from src import neighbourhoods
+
+    nb = neighbourhoods.default()
+    b = load_buildings(nb)
+    print(f"{nb.name}: {len(b)} buildings")
     print("Height coverage:", height_coverage(b))

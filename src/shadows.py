@@ -84,6 +84,7 @@ def canopy_shade(
     when: datetime,
     sun_altitude_deg: Optional[float] = None,
     sun_azimuth_deg: Optional[float] = None,
+    aoi_key: str = "default",
 ) -> gpd.GeoDataFrame:
     """Tree-canopy shade polygons for ``bbox`` at ``when`` (WGS84 out).
 
@@ -101,6 +102,7 @@ def canopy_shade(
         when,
         sun_altitude_deg=sun_altitude_deg,
         sun_azimuth_deg=sun_azimuth_deg,
+        aoi_key=aoi_key,
     )
 
 
@@ -128,6 +130,7 @@ def combined_shade(
     buildings_wgs84: gpd.GeoDataFrame,
     when: datetime,
     include_trees: bool = True,
+    aoi_key: str = "default",
 ) -> gpd.GeoDataFrame:
     """Union of building + (optional) tree-canopy shade, projected to metric CRS.
 
@@ -143,7 +146,7 @@ def combined_shade(
     if include_trees:
         minx, miny, maxx, maxy = buildings_wgs84.total_bounds
         try:
-            tsh = canopy_shade((minx, miny, maxx, maxy), when)
+            tsh = canopy_shade((minx, miny, maxx, maxy), when, aoi_key=aoi_key)
             if len(tsh):
                 parts.append(unary_union(tsh.geometry.values))
         except Exception as exc:  # canopy is best-effort; never fail the frame
@@ -154,10 +157,10 @@ def combined_shade(
     return out.to_crs(config.CRS_METRIC)
 
 
-def shade_cache_path(when: datetime, include_trees: bool) -> str:
-    """Deterministic cache path keyed by timestamp + tree inclusion."""
+def shade_cache_path(when: datetime, include_trees: bool, aoi_key: str = "default") -> str:
+    """Deterministic cache path keyed by AOI + timestamp + tree inclusion."""
     key = f"{pd.Timestamp(when).strftime('%Y%m%dT%H%M')}_{'t' if include_trees else 'b'}"
-    return os.path.join(config.DATA_DIR, f"shade_{key}.gpkg")
+    return os.path.join(config.DATA_DIR, f"shade_{aoi_key}_{key}.gpkg")
 
 
 def load_or_build_shade(
@@ -165,13 +168,14 @@ def load_or_build_shade(
     when: datetime,
     include_trees: bool = True,
     use_cache: bool = True,
+    aoi_key: str = "default",
 ) -> gpd.GeoDataFrame:
-    """Combined shade layer (EPSG:32617), cached to disk per solar bucket."""
+    """Combined shade layer (EPSG:32617), cached to disk per AOI + solar bucket."""
     when = config.solar_bucket(when)
-    path = shade_cache_path(when, include_trees)
+    path = shade_cache_path(when, include_trees, aoi_key)
     if use_cache and os.path.exists(path):
         return gpd.read_file(path)
-    shade = combined_shade(buildings_wgs84, when, include_trees=include_trees)
+    shade = combined_shade(buildings_wgs84, when, include_trees=include_trees, aoi_key=aoi_key)
     os.makedirs(config.DATA_DIR, exist_ok=True)
     if shade.geometry.iloc[0] is not None:
         shade.to_file(path, driver="GPKG")
@@ -179,12 +183,13 @@ def load_or_build_shade(
 
 
 if __name__ == "__main__":
-    from src import data
+    from src import data, neighbourhoods
 
-    blds = data.load_buildings()
+    nb = neighbourhoods.default()
+    blds = data.load_buildings(nb)
     when = config.default_date()
     sh = building_shadows(blds, when)
-    print(f"Building shadows: {len(sh)} polygons at {when.isoformat()}")
-    comb = combined_shade(blds, when, include_trees=False)
+    print(f"{nb.name}: {len(sh)} building-shadow polygons at {when.isoformat()}")
+    comb = combined_shade(blds, when, include_trees=False, aoi_key=nb.slug)
     area_km2 = comb.geometry.iloc[0].area / 1e6 if comb.geometry.iloc[0] else 0
     print(f"Combined (buildings-only) shade area: {area_km2:.3f} km^2 (EPSG:32617)")

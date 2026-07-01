@@ -48,6 +48,10 @@ CRS_METRIC: str = "EPSG:32617"
 METERS_PER_LEVEL: float = 3.5
 DEFAULT_BUILDING_HEIGHT_M: float = 4.0
 
+# Buildings within this margin (m) *outside* the selected neighbourhood are still
+# downloaded, so shadows cast from just over the boundary reach into the AOI.
+BUILDINGS_MARGIN_M: float = 250.0
+
 # --- Tree canopy (Meta/WRI 1m global canopy height) -----------------------
 # Heights at or above this threshold (metres) are treated as shade-casting
 # tree canopy.

@@ -13,6 +13,7 @@ Examples
     python scripts/precompute.py --date 2024-06-21  # a specific day
     python scripts/precompute.py --year 2024        # one rep day per week (whole year)
     python scripts/precompute.py --no-trees         # buildings-only frames
+    python scripts/precompute.py --neighbourhood "Annex" --year 2024   # another area
 """
 from __future__ import annotations
 
@@ -43,21 +44,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config  # noqa: E402
 
 
-def _build_one(iso: str, include_trees: bool) -> tuple[str, float]:
+def _build_one(iso: str, include_trees: bool, nb_name: str) -> tuple[str, float]:
     """Worker: build (and cache) the shade frame for one timestamp."""
     import warnings as _w
 
     _w.filterwarnings("ignore")
-    from src import frames
+    from src import frames, neighbourhoods
 
+    nb = neighbourhoods.get(nb_name)
     t = time.time()
     frames.build_frame(
-        when=datetime.fromisoformat(iso), include_trees=include_trees, use_cache=True
+        nb, when=datetime.fromisoformat(iso), include_trees=include_trees, use_cache=True
     )
     return iso, time.time() - t
 
 
 def main() -> None:
+    import config as _c  # noqa: F401 (ensure importable in child)
+    from src import neighbourhoods
+
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (Toronto). Default: today.")
     ap.add_argument("--days", type=int, default=1, help="Consecutive days from --date.")
@@ -67,6 +72,10 @@ def main() -> None:
              "(makes every date in the year instant). Overrides --date/--days.",
     )
     ap.add_argument("--no-trees", action="store_true", help="Skip tree-canopy shade.")
+    ap.add_argument(
+        "--neighbourhood", default=neighbourhoods.DEFAULT_NEIGHBOURHOOD,
+        help="Toronto neighbourhood name to warm (default: %(default)s).",
+    )
     ap.add_argument(
         "--step", type=int, default=config.FRAME_STEP_MINUTES,
         help=f"Frame step in minutes (default {config.FRAME_STEP_MINUTES}). Use a "
@@ -80,6 +89,7 @@ def main() -> None:
 
     include_trees = not args.no_trees
     step = args.step
+    nb = neighbourhoods.get(args.neighbourhood)  # validate name up front
 
     jobs: list[str] = []
     if args.year is not None:
@@ -98,7 +108,7 @@ def main() -> None:
                 if iso not in seen:
                     seen.add(iso)
                     jobs.append(iso)
-        scope = f"year {args.year}: {len(seen)} daylight frames across ~52 weekly buckets ({step} min)"
+        scope = f"{nb.name}, year {args.year}: {len(seen)} daylight frames across ~52 weekly buckets ({step} min)"
     else:
         base = (
             datetime.now(config.TORONTO_TZ).date()
@@ -110,9 +120,16 @@ def main() -> None:
             for t in config.day_frames(day, step):
                 jobs.append(t.isoformat())
         scope = (
-            f"{base} +{args.days - 1}d, {config.FRAME_START_HOUR:02d}:00-"
+            f"{nb.name}, {base} +{args.days - 1}d, {config.FRAME_START_HOUR:02d}:00-"
             f"{config.FRAME_END_HOUR:02d}:00 (daylight) every {step} min"
         )
+
+    # Warm the neighbourhood's buildings (and canopy) caches single-threaded first,
+    # so parallel workers don't race to download/build them concurrently.
+    print(f"Preparing {nb.name} (buildings + canopy)…", flush=True)
+    from src import frames as _frames
+
+    _frames.build_frame(nb, when=datetime.fromisoformat(jobs[len(jobs) // 2]), include_trees=include_trees)
 
     workers = args.workers or min(os.cpu_count() or 4, len(jobs))
     print(
@@ -124,7 +141,7 @@ def main() -> None:
     t0 = time.time()
     done = 0
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_build_one, iso, include_trees): iso for iso in jobs}
+        futures = {pool.submit(_build_one, iso, include_trees, nb.name): iso for iso in jobs}
         for fut in as_completed(futures):
             iso, secs = fut.result()
             done += 1

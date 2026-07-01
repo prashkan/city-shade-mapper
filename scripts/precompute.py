@@ -11,6 +11,7 @@ Examples
     python scripts/precompute.py --days 3           # today + next 2 days
     python scripts/precompute.py --workers 8        # cap parallelism
     python scripts/precompute.py --date 2024-06-21  # a specific day
+    python scripts/precompute.py --year 2024        # one rep day per week (whole year)
     python scripts/precompute.py --no-trees         # buildings-only frames
 """
 from __future__ import annotations
@@ -60,6 +61,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (Toronto). Default: today.")
     ap.add_argument("--days", type=int, default=1, help="Consecutive days from --date.")
+    ap.add_argument(
+        "--year", type=int, default=None,
+        help="Warm one representative day per weekly solar bucket for this year "
+             "(makes every date in the year instant). Overrides --date/--days.",
+    )
     ap.add_argument("--no-trees", action="store_true", help="Skip tree-canopy shade.")
     ap.add_argument(
         "--workers", type=int, default=0,
@@ -67,25 +73,45 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    base = (
-        datetime.now(config.TORONTO_TZ).date()
-        if not args.date
-        else datetime.strptime(args.date, "%Y-%m-%d").date()
-    )
     include_trees = not args.no_trees
 
     jobs: list[str] = []
-    for di in range(args.days):
-        day = datetime(base.year, base.month, base.day, tzinfo=config.TORONTO_TZ) + timedelta(days=di)
-        for t in config.day_frames(day):
-            jobs.append(t.isoformat())
+    if args.year is not None:
+        # One representative day per weekly solar bucket. solar_bucket() snaps
+        # any date in a bucket to the same cache key, so warming the bucket's
+        # midpoint day covers every date in that ~week.
+        jan1 = datetime(args.year, 1, 1, tzinfo=config.TORONTO_TZ)
+        n_days = 366 if (jan1.replace(month=12, day=31).timetuple().tm_yday == 366) else 365
+        seen: set[str] = set()
+        for bucket in range((n_days + config.SOLAR_BUCKET_DAYS - 1) // config.SOLAR_BUCKET_DAYS):
+            rep_doy = bucket * config.SOLAR_BUCKET_DAYS + 1 + config.SOLAR_BUCKET_DAYS // 2
+            rep_doy = min(rep_doy, n_days)
+            day = jan1 + timedelta(days=rep_doy - 1)
+            for t in config.day_frames(day):
+                iso = config.solar_bucket(t).isoformat()
+                if iso not in seen:
+                    seen.add(iso)
+                    jobs.append(iso)
+        scope = f"year {args.year}: {len(seen)} daylight frames across ~52 weekly buckets"
+    else:
+        base = (
+            datetime.now(config.TORONTO_TZ).date()
+            if not args.date
+            else datetime.strptime(args.date, "%Y-%m-%d").date()
+        )
+        for di in range(args.days):
+            day = datetime(base.year, base.month, base.day, tzinfo=config.TORONTO_TZ) + timedelta(days=di)
+            for t in config.day_frames(day):
+                jobs.append(t.isoformat())
+        scope = (
+            f"{base} +{args.days - 1}d, {config.FRAME_START_HOUR:02d}:00-"
+            f"{config.FRAME_END_HOUR:02d}:00 (daylight) every {config.FRAME_STEP_MINUTES} min"
+        )
 
     workers = args.workers or min(os.cpu_count() or 4, len(jobs))
     print(
         f"Pre-warming {len(jobs)} timestamps across {workers} workers "
-        f"({base} +{args.days - 1}d, {config.FRAME_START_HOUR:02d}:00-"
-        f"{config.FRAME_END_HOUR:02d}:00 every {config.FRAME_STEP_MINUTES} min, "
-        f"trees={'on' if include_trees else 'off'})…",
+        f"({scope}, trees={'on' if include_trees else 'off'})…",
         flush=True,
     )
 

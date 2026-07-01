@@ -6,7 +6,9 @@ Village / King West, Toronto, Canada**.
 
 Pick a date, then scrub a **time-of-day slider** — or press **▶ Play** — and
 watch the ground shade cast by buildings (and tree canopy) rotate and stretch
-from morning to evening.
+from morning to evening. Playback runs **client-side** in a single deck.gl
+component, so the shadows glide smoothly without the map reloading or losing your
+pan/zoom/tilt.
 
 *Forked from [`city-shade-router`](https://github.com/prashkan/city-shade-router):
 it reuses that project's shadow engine (building shadows via `pybdshadow`, tree
@@ -15,10 +17,13 @@ of a time-animated shade visualisation.*
 
 ## Features
 
-- ☀️ **Time-animated shadows** — a slider + ▶ Play button sweep the day from
-  sunrise to sunset.
+- ☀️ **Time-animated shadows** — an in-map slider + ▶ Play button sweep the day
+  from sunrise to sunset, animated **client-side** for seamless, flicker-free
+  playback (the basemap and camera never reload).
 - 🏙️ **3D neighbourhood** — extruded OSM building footprints for spatial context.
 - 🌳 **Two shade sources** — building shadows ∪ tree-canopy shade (toggleable).
+- 🌅 **Daylight-only timeline** — auto-clamped to that day's real sunrise/sunset
+  (shorter in winter, longer in summer); no wasted night compute.
 - 📊 **Live metrics** — sun altitude and % of the neighbourhood in shade per moment.
 - ⚡ **Frame caching** — shade is computed once per timestamp (per solar bucket)
   and cached, so scrubbing and replaying are instant.
@@ -34,10 +39,11 @@ Streamlit · pydeck.
    building shadows via `pybdshadow`; tree-canopy shade from the Meta/WRI 1 m
    global canopy-height raster (`src/canopy.py`).
 3. **Frames** (`src/frames.py`) — union the two shade sources into one ground-shade
-   layer per timestamp, cache it, and report shaded-area metrics.
-4. **Dashboard** (`app.py`) — Streamlit + a tokenless Carto basemap (`pydeck`);
-   a date picker plus an animated time-of-day slider drive which shade frame is
-   drawn over the 3D buildings.
+   layer per timestamp, clip to the AOI, cache it, and report shaded-area metrics.
+4. **Dashboard** (`app.py` + `src/viz.py`) — build every daylight frame for the
+   chosen day (as GeoJSON) and hand them to a single deck.gl component on a
+   tokenless Carto basemap. A JS timer swaps only the shade layer each tick, so
+   the day animates client-side with no Streamlit reruns.
 
 ## Engineering guardrails
 
@@ -67,9 +73,10 @@ streamlit run app.py                 # full app
 ```
 
 > **Tip:** the first use of each timestamp computes shade (~10-30 s, then
-> cached). `scripts/precompute.py` warms a whole day of frames up front
-> (parallelised across CPU cores) so the slider and ▶ Play are instant. Use
-> `--date 2024-06-21` for a specific day or `--days 3` to cover several.
+> cached). `scripts/precompute.py` warms frames up front (parallelised across CPU
+> cores) so the slider and ▶ Play are instant. Use `--date 2024-06-21` for one
+> day, `--days 3` for several, or `--year 2024` to warm one representative day
+> per week for the whole year (every date instant).
 
 ## Tests
 
@@ -81,5 +88,7 @@ PYTHONPATH=. pytest -q          # config / timeline unit tests (no network)
 
 - [x] Study area retargeted to Liberty Village / King West, Toronto
 - [x] Shade engine (buildings + tree canopy) reused from `city-shade-router`
-- [x] Per-timestamp shade frames + caching (`src/frames.py`)
-- [x] Streamlit time-slider + ▶ Play animation (`app.py`)
+- [x] Per-timestamp shade frames + caching, clipped to the AOI (`src/frames.py`)
+- [x] Daylight-only timeline (sunrise→sunset, season-aware)
+- [x] Seamless client-side deck.gl animation — in-map slider + ▶ Play (`src/viz.py`)
+- [x] Whole-year precompute (`scripts/precompute.py --year`)

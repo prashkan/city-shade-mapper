@@ -7,11 +7,38 @@ scrubbing the time slider (or replaying a day) is instant after the first build.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 
 import geopandas as gpd
 
 import config
 from src import data, shadows
+
+
+@lru_cache(maxsize=1)
+def aoi_polygon_metric():
+    """The square AOI as a single shapely polygon in EPSG:32617 (cached)."""
+    from shapely.geometry import box
+
+    minx, miny, maxx, maxy = config.aoi_bbox()
+    return (
+        gpd.GeoSeries([box(minx, miny, maxx, maxy)], crs=config.CRS_WGS84)
+        .to_crs(config.CRS_METRIC)
+        .iloc[0]
+    )
+
+
+def aoi_clip(shade_metric: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Clip a shade layer (EPSG:32617) to the AOI.
+
+    At low sun angles shadows sprawl far past the neighbourhood; clipping keeps
+    the rendered payload small and makes shaded-area metrics meaningful (a shadow
+    reaching outside the map shouldn't count toward "AOI in shade").
+    """
+    if not len(shade_metric) or shade_metric.geometry.iloc[0] is None:
+        return shade_metric
+    clipped = shade_metric.geometry.iloc[0].intersection(aoi_polygon_metric())
+    return gpd.GeoDataFrame({"kind": ["shade"]}, geometry=[clipped], crs=config.CRS_METRIC)
 
 
 def build_frame(

@@ -22,6 +22,11 @@ st.set_page_config(page_title="Toronto Shadow Mapper", page_icon="☀", layout="
 
 MAP_HEIGHT = 640
 
+# Smoothness -> minutes between shade frames (finer = smoother shadow motion).
+SMOOTHNESS = {"Standard (30 min)": 30, "Smooth (15 min)": 15, "Fine (10 min)": 10}
+# Speed -> seconds to play the whole day, independent of how many frames it has.
+SPEED_SECONDS = {"Relaxed": 26, "Brisk": 14, "Fast": 7}
+
 
 @st.cache_data(show_spinner=False)
 def _buildings_fc():
@@ -30,12 +35,12 @@ def _buildings_fc():
 
 
 @st.cache_data(show_spinner="Casting the day's shadows…")
-def _day_payload(date_iso: str, include_trees: bool) -> list[dict]:
+def _day_payload(date_iso: str, include_trees: bool, step_min: int) -> list[dict]:
     """All daylight shade frames for a day: label, sun altitude, shade %, geojson."""
     day = datetime.fromisoformat(date_iso)
     clat, clon = config.CENTER_LATLON
     out: list[dict] = []
-    for when in config.day_frames(day):
+    for when in config.day_frames(day, step_min):
         frame = frames.aoi_clip(frames.build_frame(when=when, include_trees=include_trees))
         alt = math.degrees(shadows.sun_position(when, clon, clat)["altitude"])
         out.append({
@@ -70,22 +75,37 @@ with st.sidebar:
     include_trees = mode == "Buildings + trees"
     extruded = st.checkbox("3D buildings", value=True, key="extruded")
 
+    st.subheader("Animation")
+    smoothness = st.select_slider(
+        "Smoothness", options=list(SMOOTHNESS), value="Standard (30 min)", key="smooth",
+        help="Finer steps move the shadows in smaller time increments (smoother "
+             "motion, a bit more to compute the first time).",
+    )
+    speed = st.select_slider(
+        "Speed", options=list(SPEED_SECONDS), value="Brisk", key="speed",
+        help="How fast ▶ Play sweeps the whole day.",
+    )
+    step_min = SMOOTHNESS[smoothness]
+    play_seconds = SPEED_SECONDS[speed]
+
     st.caption(
-        "First load of a new date computes that day's frames (fast if precomputed; "
-        "see `scripts/precompute.py`). Playback afterwards is instant."
+        "First load of a new date/smoothness computes that day's frames (fast if "
+        "precomputed; see `scripts/precompute.py`). Playback afterwards is instant."
     )
 
 day = datetime(the_date.year, the_date.month, the_date.day, tzinfo=config.TORONTO_TZ)
-frames_payload = _day_payload(day.isoformat(), include_trees)
+frames_payload = _day_payload(day.isoformat(), include_trees, step_min)
 
 if not frames_payload:
     st.info("No daylight at this location on the selected date — nothing to animate.")
 else:
+    interval_ms = max(90, round(play_seconds * 1000 / len(frames_payload)))
     html = viz.animated_html(
         buildings=_buildings_fc(),
         frames=frames_payload,
         view=viz.fit_view([]),
         extruded=extruded,
         height=MAP_HEIGHT,
+        interval_ms=interval_ms,
     )
     st.iframe(html, height=MAP_HEIGHT + 20)

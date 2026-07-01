@@ -20,9 +20,11 @@ of a time-animated shade visualisation.*
 - ☀️ **Time-animated shadows** — an in-map slider + ▶ Play button sweep the day
   from sunrise to sunset, animated **client-side** with a frame-to-frame crossfade
   for smooth, flicker-free playback (the basemap and camera never reload).
+- 🎛️ **Smoothness & speed controls** — choose the shadow-step granularity
+  (30 / 15 / 10 min) and how fast ▶ Play sweeps the whole day.
 - 🏙️ **3D neighbourhood** — extruded OSM building footprints for spatial context.
-- 🌳 **Buildings + trees, or buildings-only** — pick the shade sources; the
-  buildings-only mode is lighter and faster.
+- 🌳 **Buildings + trees, or buildings-only** — pick the shade sources; tree
+  canopy is morphologically smoothed so it reads as soft blobs, not pixel squares.
 - 🌅 **Daylight-only timeline** — auto-clamped to that day's real sunrise/sunset
   (shorter in winter, longer in summer); no wasted night compute.
 - 📊 **Live metrics** — sun altitude and % of the neighbourhood in shade per moment.
@@ -78,7 +80,8 @@ streamlit run app.py                 # full app
 > cached). `scripts/precompute.py` warms frames up front (parallelised across CPU
 > cores) so the slider and ▶ Play are instant. Use `--date 2024-06-21` for one
 > day, `--days 3` for several, or `--year 2024` to warm one representative day
-> per week for the whole year (every date instant).
+> per week for the whole year. Add `--step 15` (or `10`) to warm the finer
+> **Smoothness** settings, and `--no-trees` for the buildings-only mode.
 
 ## Tests
 

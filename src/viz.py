@@ -119,6 +119,26 @@ def _round_coords(obj, nd: int):
     return obj
 
 
+def _polygonal(geom):
+    """Return only the polygonal part(s) of ``geom`` as a Polygon/MultiPolygon.
+
+    Clipping the shade to the AOI can yield a GeometryCollection with stray line
+    or point slivers; those have no GeoJSON ``coordinates`` and aren't drawable,
+    so we drop them and keep the polygons.
+    """
+    if geom is None or geom.is_empty:
+        return None
+    t = geom.geom_type
+    if t in ("Polygon", "MultiPolygon"):
+        return geom
+    if t == "GeometryCollection":
+        from shapely.ops import unary_union
+
+        polys = [g for g in geom.geoms if g.geom_type in ("Polygon", "MultiPolygon")]
+        return unary_union(polys) if polys else None
+    return None
+
+
 def buildings_fc(buildings_wgs84: gpd.GeoDataFrame, simplify_m: float = 2.0, nd: int = 5) -> dict:
     """Buildings as a GeoJSON FeatureCollection with a ``height`` property.
 
@@ -153,7 +173,7 @@ def shade_fc(shade_metric: gpd.GeoDataFrame, simplify_m: float = 8.0, nd: int = 
     empty = {"type": "FeatureCollection", "features": []}
     if not len(shade_metric) or shade_metric.geometry.iloc[0] is None:
         return empty
-    geom = shade_metric.geometry.iloc[0].simplify(simplify_m)
+    geom = _polygonal(shade_metric.geometry.iloc[0].simplify(simplify_m))
     if geom is None or geom.is_empty:
         return empty
     gj = mapping(gpd.GeoSeries([geom], crs=config.CRS_METRIC).to_crs(config.CRS_WGS84).iloc[0])

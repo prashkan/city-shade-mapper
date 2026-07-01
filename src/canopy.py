@@ -48,6 +48,11 @@ CANOPY_TREES_CACHE = os.path.join(config.DATA_DIR, "canopy_trees.gpkg")
 # Read the AOI at ~this many metres/pixel; 1.2 m native is overkill for routing.
 CANOPY_READ_RES_M: float = 3.0
 
+# Morphological smoothing radius (m) applied to the vectorised canopy footprint
+# to round the raster pixel-staircase so tree shade reads as smooth blobs, not
+# jagged squares. Roughly the pixel size; larger = smoother but coarser.
+CANOPY_SMOOTH_M: float = 5.0
+
 # GDAL tuning for remote COG reads.
 _GDAL_ENV = dict(
     GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
@@ -140,6 +145,17 @@ def _load_tree_canopy(bbox_wgs84, use_cache: bool = True):
         .to_crs(config.CRS_METRIC)
         .geometry.values
     )
+    # The raster mask vectorises into blocky, pixel-staircase polygons, which
+    # make the tree shade look jagged. A morphological close (round dilate then
+    # erode) fills the pixel notches and rounds corners; a light simplify then
+    # drops redundant vertices. Coverage is preserved (a close never shrinks
+    # below the input), so we don't lose thin canopy strips.
+    r = CANOPY_SMOOTH_M
+    smoothed = trees_geom.buffer(r, join_style=1, quad_segs=3).buffer(
+        -r, join_style=1, quad_segs=3
+    )
+    if smoothed is not None and not smoothed.is_empty:
+        trees_geom = smoothed.simplify(2.0)
     rep_height = float(np.median(heights)) if heights else config.CANOPY_MIN_HEIGHT_M
 
     os.makedirs(config.DATA_DIR, exist_ok=True)

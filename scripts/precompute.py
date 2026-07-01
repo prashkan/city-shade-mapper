@@ -68,12 +68,18 @@ def main() -> None:
     )
     ap.add_argument("--no-trees", action="store_true", help="Skip tree-canopy shade.")
     ap.add_argument(
+        "--step", type=int, default=config.FRAME_STEP_MINUTES,
+        help=f"Frame step in minutes (default {config.FRAME_STEP_MINUTES}). Use a "
+             "smaller value to warm the finer 'Smoothness' settings.",
+    )
+    ap.add_argument(
         "--workers", type=int, default=0,
         help="Parallel processes (default: min(cores, #timestamps)).",
     )
     args = ap.parse_args()
 
     include_trees = not args.no_trees
+    step = args.step
 
     jobs: list[str] = []
     if args.year is not None:
@@ -87,12 +93,12 @@ def main() -> None:
             rep_doy = bucket * config.SOLAR_BUCKET_DAYS + 1 + config.SOLAR_BUCKET_DAYS // 2
             rep_doy = min(rep_doy, n_days)
             day = jan1 + timedelta(days=rep_doy - 1)
-            for t in config.day_frames(day):
+            for t in config.day_frames(day, step):
                 iso = config.solar_bucket(t).isoformat()
                 if iso not in seen:
                     seen.add(iso)
                     jobs.append(iso)
-        scope = f"year {args.year}: {len(seen)} daylight frames across ~52 weekly buckets"
+        scope = f"year {args.year}: {len(seen)} daylight frames across ~52 weekly buckets ({step} min)"
     else:
         base = (
             datetime.now(config.TORONTO_TZ).date()
@@ -101,11 +107,11 @@ def main() -> None:
         )
         for di in range(args.days):
             day = datetime(base.year, base.month, base.day, tzinfo=config.TORONTO_TZ) + timedelta(days=di)
-            for t in config.day_frames(day):
+            for t in config.day_frames(day, step):
                 jobs.append(t.isoformat())
         scope = (
             f"{base} +{args.days - 1}d, {config.FRAME_START_HOUR:02d}:00-"
-            f"{config.FRAME_END_HOUR:02d}:00 (daylight) every {config.FRAME_STEP_MINUTES} min"
+            f"{config.FRAME_END_HOUR:02d}:00 (daylight) every {step} min"
         )
 
     workers = args.workers or min(os.cpu_count() or 4, len(jobs))

@@ -117,15 +117,16 @@ def sun_times(day: datetime) -> tuple[datetime, datetime] | None:
     return sunrise.to_pydatetime(), sunset.to_pydatetime()
 
 
-def day_frames(day: datetime) -> list[datetime]:
+def day_frames(day: datetime, step_minutes: int | None = None) -> list[datetime]:
     """Daylight timestamps to render for ``day`` (local), stepped by
-    FRAME_STEP_MINUTES.
+    ``step_minutes`` (defaults to FRAME_STEP_MINUTES).
 
     Night is skipped — there is no shade when the sun is down — so the timeline
     is clamped to that day's actual sunrise..sunset (which shortens automatically
     in winter and lengthens in summer). Falls back to FRAME_START_HOUR..
     FRAME_END_HOUR if sunrise/sunset can't be computed.
     """
+    step_minutes = step_minutes or FRAME_STEP_MINUTES
     window = sun_times(day)
     if window is not None:
         sunrise, sunset = window
@@ -134,7 +135,7 @@ def day_frames(day: datetime) -> list[datetime]:
         lo = day.replace(hour=FRAME_START_HOUR, minute=0, second=0, microsecond=0)
         hi = day.replace(hour=FRAME_END_HOUR, minute=0, second=0, microsecond=0)
 
-    step = timedelta(minutes=FRAME_STEP_MINUTES)
+    step = timedelta(minutes=step_minutes)
     frames: list[datetime] = []
     cursor = day.replace(hour=0, minute=0, second=0, microsecond=0)
     end = cursor + timedelta(days=1)

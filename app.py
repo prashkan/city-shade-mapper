@@ -14,7 +14,6 @@ from datetime import datetime
 warnings.filterwarnings("ignore")
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 import config
 from src import data, frames, shadows, viz
@@ -61,7 +60,14 @@ with st.sidebar:
     the_date = st.date_input("Date", value=config.default_date().date(), key="when_date")
 
     st.subheader("Shade sources")
-    include_trees = st.checkbox("Include tree canopy", value=True, key="trees")
+    mode = st.radio(
+        "Cast shadows from",
+        ["Buildings + trees", "Buildings only"],
+        index=0,
+        key="mode",
+        help="Buildings only is lighter and faster; add trees for canopy shade.",
+    )
+    include_trees = mode == "Buildings + trees"
     extruded = st.checkbox("3D buildings", value=True, key="extruded")
 
     st.caption(
@@ -82,4 +88,4 @@ else:
         extruded=extruded,
         height=MAP_HEIGHT,
     )
-    components.html(html, height=MAP_HEIGHT + 20)
+    st.iframe(html, height=MAP_HEIGHT + 20)

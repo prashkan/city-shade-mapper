@@ -167,7 +167,7 @@ def animated_html(
     view: pdk.ViewState | None = None,
     extruded: bool = True,
     height: int = 640,
-    interval_ms: int = 700,
+    interval_ms: int = 1100,
 ) -> str:
     """A self-contained deck.gl HTML component animating a day's shade frames.
 
@@ -262,14 +262,20 @@ const buildings = new D.GeoJsonLayer({
   lineWidthMinPixels: 1, stroked: true, filled: true, pickable: false
 });
 
-function shadeLayer(i) {
+const EMPTY = {type: 'FeatureCollection', features: []};
+const SHADE_ALPHA = 130;
+
+// Two stacked shade layers let us crossfade between consecutive frames as the
+// continuous playhead moves, so shadows dissolve smoothly instead of snapping.
+function shadeLayer(id, i, alpha) {
   return new D.GeoJsonLayer({
-    id: 'shade',
-    data: P.frames[i] ? P.frames[i].shade : {type: 'FeatureCollection', features: []},
+    id: id,
+    data: (P.frames[i] && P.frames[i].shade) ? P.frames[i].shade : EMPTY,
     extruded: false,
-    getFillColor: [30, 60, 110, 120],
+    getFillColor: [30, 60, 110, Math.max(0, Math.round(alpha))],
     getLineColor: [30, 60, 110, 0],
-    stroked: false, filled: true, pickable: false
+    stroked: false, filled: true, pickable: false,
+    updateTriggers: {getFillColor: [Math.round(alpha)]}
   });
 }
 
@@ -277,33 +283,63 @@ const deckgl = new D.DeckGL({
   container: 'map',
   initialViewState: P.view,
   controller: true,
-  layers: [basemap, shadeLayer(0), buildings]
+  layers: [basemap, shadeLayer('shadeA', 0, SHADE_ALPHA), shadeLayer('shadeB', 0, 0), buildings]
 });
 
 const slider = document.getElementById('slider');
 const playBtn = document.getElementById('play');
 slider.max = String(Math.max(0, N - 1));
 
-let idx = 0, timer = null;
-function render() {
-  deckgl.setProps({layers: [basemap, shadeLayer(idx), buildings]});
-  const f = P.frames[idx] || {};
+// playhead is a *continuous* frame position (float); i0/i1 are the frames it
+// sits between and `frac` is how far along, driving the crossfade.
+let playhead = Math.floor(N / 2);
+let playing = false, lastTs = null, rafId = null;
+
+function readout(i) {
+  const f = P.frames[i] || {};
   document.getElementById('t_time').textContent = f.label || '--';
   document.getElementById('t_alt').textContent = (f.sun_alt != null ? f.sun_alt : '--');
   document.getElementById('t_pct').textContent = (f.shade_pct != null ? f.shade_pct : '--');
-  slider.value = String(idx);
 }
-function stop() { if (timer) { clearInterval(timer); timer = null; } playBtn.innerHTML = '&#9654;'; }
+
+function render() {
+  const base = Math.floor(playhead) % N;
+  const i0 = (base + N) % N;
+  const frac = playhead - Math.floor(playhead);
+  const i1 = (i0 + 1) % N;
+  deckgl.setProps({layers: [
+    basemap,
+    shadeLayer('shadeA', i0, SHADE_ALPHA * (1 - frac)),
+    shadeLayer('shadeB', i1, SHADE_ALPHA * frac),
+    buildings
+  ]});
+  readout(frac < 0.5 ? i0 : i1);
+  slider.value = String(Math.round(playhead) % N);
+}
+
+function frame(ts) {
+  if (!playing) return;
+  if (lastTs == null) lastTs = ts;
+  playhead += (ts - lastTs) / P.intervalMs;  // advance one frame per intervalMs
+  lastTs = ts;
+  if (playhead >= N) playhead -= N;
+  render();
+  rafId = requestAnimationFrame(frame);
+}
+function stop() {
+  playing = false; lastTs = null;
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  playBtn.innerHTML = '&#9654;';
+}
 function play() {
   if (N <= 1) return;
+  playing = true; lastTs = null;
   playBtn.innerHTML = '&#10073;&#10073;';
-  timer = setInterval(() => { idx = (idx + 1) % N; render(); }, P.intervalMs);
+  rafId = requestAnimationFrame(frame);
 }
-playBtn.onclick = () => { timer ? stop() : play(); };
-slider.oninput = () => { stop(); idx = parseInt(slider.value, 10) || 0; render(); };
+playBtn.onclick = () => { playing ? stop() : play(); };
+slider.oninput = () => { stop(); playhead = parseInt(slider.value, 10) || 0; render(); };
 
-// Start near solar noon (middle of the day) for a sensible first frame.
-idx = Math.floor(N / 2);
 render();
 </script>
 </body>

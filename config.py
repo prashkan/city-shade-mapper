@@ -9,7 +9,7 @@ Pilot area: **Liberty Village / King West, Toronto, Canada**.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # --- Study area ------------------------------------------------------------
@@ -62,7 +62,8 @@ TORONTO_TZ = ZoneInfo("America/Toronto")
 # midpoint day-of-year, keeping the worst-case sun error small.
 SOLAR_BUCKET_DAYS: int = 7
 
-# Default animation range (local clock hours) and step for the day's shade frames.
+# Default animation range (local clock hours) used as a fallback when sunrise/
+# sunset can't be computed. Normally the timeline is clamped to actual daylight.
 FRAME_START_HOUR: int = 6
 FRAME_END_HOUR: int = 21
 FRAME_STEP_MINUTES: int = 30
@@ -91,16 +92,55 @@ def default_date() -> datetime:
     return datetime(2024, 6, 21, 12, 0, 0, tzinfo=TORONTO_TZ)
 
 
+def sun_times(day: datetime) -> tuple[datetime, datetime] | None:
+    """Local (sunrise, sunset) for ``day`` at the AOI centre, or None.
+
+    Returns ``None`` if suncalc is unavailable or the sun never rises/sets that
+    day (polar edge cases), so callers can fall back to a fixed hour window.
+    """
+    try:
+        import pandas as pd
+        from suncalc import get_times
+    except Exception:  # pragma: no cover
+        return None
+
+    lat, lon = CENTER_LATLON
+    noon = day.replace(hour=12, minute=0, second=0, microsecond=0)
+    ts = pd.Timestamp(noon)
+    ts = ts.tz_convert("UTC") if ts.tzinfo else ts.tz_localize("UTC")
+    t = get_times(ts.to_pydatetime(), lon, lat)
+    sr, ss = t.get("sunrise"), t.get("sunset")
+    if sr is None or ss is None or pd.isna(sr) or pd.isna(ss):
+        return None
+    sunrise = pd.Timestamp(sr).tz_localize("UTC").tz_convert(TORONTO_TZ).floor("s")
+    sunset = pd.Timestamp(ss).tz_localize("UTC").tz_convert(TORONTO_TZ).floor("s")
+    return sunrise.to_pydatetime(), sunset.to_pydatetime()
+
+
 def day_frames(day: datetime) -> list[datetime]:
-    """Timestamps to render for ``day`` (local), FRAME_START..FRAME_END by step."""
-    frames: list[datetime] = []
-    cursor = day.replace(
-        hour=FRAME_START_HOUR, minute=0, second=0, microsecond=0
-    )
-    end = day.replace(hour=FRAME_END_HOUR, minute=0, second=0, microsecond=0)
+    """Daylight timestamps to render for ``day`` (local), stepped by
+    FRAME_STEP_MINUTES.
+
+    Night is skipped — there is no shade when the sun is down — so the timeline
+    is clamped to that day's actual sunrise..sunset (which shortens automatically
+    in winter and lengthens in summer). Falls back to FRAME_START_HOUR..
+    FRAME_END_HOUR if sunrise/sunset can't be computed.
+    """
+    window = sun_times(day)
+    if window is not None:
+        sunrise, sunset = window
+        lo, hi = sunrise, sunset
+    else:
+        lo = day.replace(hour=FRAME_START_HOUR, minute=0, second=0, microsecond=0)
+        hi = day.replace(hour=FRAME_END_HOUR, minute=0, second=0, microsecond=0)
+
     step = timedelta(minutes=FRAME_STEP_MINUTES)
-    while cursor <= end:
-        frames.append(cursor)
+    frames: list[datetime] = []
+    cursor = day.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = cursor + timedelta(days=1)
+    while cursor < end:
+        if lo <= cursor <= hi:
+            frames.append(cursor)
         cursor += step
     return frames
 
